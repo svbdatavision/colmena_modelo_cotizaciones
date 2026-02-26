@@ -2,10 +2,7 @@ import argparse
 import logging
 import sys
 
-from pyspark.sql import SparkSession
-
 from proyecto_cotizaciones.config import PipelineConfig
-from proyecto_cotizaciones.pipeline import run_pipeline
 
 
 def parse_args(argv):
@@ -42,6 +39,9 @@ def main(argv=None):
         selenium_download_dir=args.selenium_download_dir,
         log_level=args.log_level,
     )
+
+    from pyspark.sql import SparkSession
+    from proyecto_cotizaciones.pipeline import run_pipeline
 
     spark = SparkSession.builder.getOrCreate()
     inserted_rows = run_pipeline(spark=spark, config=config)
