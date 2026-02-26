@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Legacy local artifacts
+logs/
+pdfs/
+tmp/
+venv/
