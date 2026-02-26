@@ -1,0 +1,4 @@
+pdfminer.six>=20231228
+pypasser>=0.0.5
+requests>=2.32.3
+selenium>=4.28.1
