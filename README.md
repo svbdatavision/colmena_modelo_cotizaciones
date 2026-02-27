@@ -4,7 +4,7 @@ Refactor Lift & Shift del flujo `CERT AFP SCRAP` para ejecución en Databricks A
 
 ## Cambios principales
 
-- Flujo modular en `proyecto_cotizaciones/`.
+- Flujo modular en `src/` con numeración de ejecución.
 - Eliminación de CSV intermedios como mecanismo de proceso.
 - Persistencia final directa a tabla Delta.
 - Lectura de origen desde tabla SQL en Databricks (`source_table`).
@@ -15,14 +15,13 @@ Refactor Lift & Shift del flujo `CERT AFP SCRAP` para ejecución en Databricks A
 
 ```text
 run_pipeline.py
-proyecto_cotizaciones/
-  __init__.py
-  config.py
-  afp_rules.py
-  parsing.py
-  pdf_utils.py
-  afp_validator.py
-  pipeline.py
+src/
+  01_config.py
+  02_afp_rules.py
+  03_parsing.py
+  04_pdf_utils.py
+  05_afp_validator.py
+  06_pipeline.py
 ```
 
 ## Parámetros de ejecución

@@ -1,7 +1,7 @@
 import re
 from typing import Optional
 
-from .afp_rules import AFP_RULES
+from cot_02_afp_rules import AFP_RULES
 
 
 def normalize_afp_from_text(text: str) -> str:

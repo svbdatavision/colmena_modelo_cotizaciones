@@ -7,7 +7,7 @@ from typing import Optional
 
 import requests
 
-from .afp_rules import AFP_RULES
+from cot_02_afp_rules import AFP_RULES
 
 try:
     from pypasser import reCaptchaV3  # type: ignore

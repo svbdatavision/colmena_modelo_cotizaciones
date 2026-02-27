@@ -9,9 +9,8 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import BooleanType, DateType, LongType, StringType, StructField, StructType, TimestampType
 
-from .afp_validator import AFPValidationError, AFPValidator
-from .config import PipelineConfig
-from .parsing import (
+from cot_01_config import PipelineConfig
+from cot_03_parsing import (
     calculate_rut_l11,
     extract_codver,
     extract_rut,
@@ -19,7 +18,8 @@ from .parsing import (
     metadata_matches,
     normalize_afp_from_text,
 )
-from .pdf_utils import extract_pdf_metadata, extract_pdf_text_normalized
+from cot_04_pdf_utils import extract_pdf_metadata, extract_pdf_text_normalized
+from cot_05_afp_validator import AFPValidationError, AFPValidator
 
 LOGGER = logging.getLogger(__name__)
 SOURCE_REQUIRED_COLUMNS = {"DOC_IDN", "LINK", "PERIODO_PRODUCCION", "FECHA_INGRESO"}

@@ -1,9 +1,9 @@
 import argparse
+import importlib.util
 import logging
 import os
+from pathlib import Path
 import sys
-
-from proyecto_cotizaciones.config import PipelineConfig
 
 
 def parse_args(argv):
@@ -43,6 +43,32 @@ def _default_argv() -> list:
     return sys.argv[1:]
 
 
+def _load_module(module_name: str, file_name: str):
+    source_path = Path(__file__).resolve().parent / "src" / file_name
+    spec = importlib.util.spec_from_file_location(module_name, source_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"No se pudo cargar modulo: {file_name}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_runtime_modules():
+    ordered_modules = [
+        ("cot_01_config", "01_config.py"),
+        ("cot_02_afp_rules", "02_afp_rules.py"),
+        ("cot_03_parsing", "03_parsing.py"),
+        ("cot_04_pdf_utils", "04_pdf_utils.py"),
+        ("cot_05_afp_validator", "05_afp_validator.py"),
+        ("cot_06_pipeline", "06_pipeline.py"),
+    ]
+    loaded = {}
+    for module_name, file_name in ordered_modules:
+        loaded[module_name] = _load_module(module_name, file_name)
+    return loaded
+
+
 def main(argv=None):
     if argv is None:
         argv = _default_argv()
@@ -53,7 +79,11 @@ def main(argv=None):
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
-    config = PipelineConfig(
+    runtime_modules = _load_runtime_modules()
+    pipeline_config = runtime_modules["cot_01_config"].PipelineConfig
+    run_pipeline = runtime_modules["cot_06_pipeline"].run_pipeline
+
+    config = pipeline_config(
         source_table=args.source_table,
         target_table=args.target_table,
         lookback_days=args.lookback_days,
@@ -69,7 +99,6 @@ def main(argv=None):
     )
 
     from pyspark.sql import SparkSession
-    from proyecto_cotizaciones.pipeline import run_pipeline
 
     spark = SparkSession.builder.getOrCreate()
     inserted_rows = run_pipeline(spark=spark, config=config)
