@@ -21,7 +21,9 @@ def parse_args(argv):
 
 
 def main(argv=None):
-    args = parse_args(argv or sys.argv[1:])
+    if argv is None:
+        argv = []
+    args = parse_args(argv)
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -49,4 +51,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
