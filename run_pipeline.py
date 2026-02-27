@@ -1,5 +1,7 @@
 import argparse
 import logging
+import os
+import sys
 
 from proyecto_cotizaciones.config import PipelineConfig
 
@@ -34,9 +36,16 @@ def parse_args(argv):
     return parser.parse_args(argv)
 
 
+def _default_argv() -> list:
+    # Databricks notebooks inject internal args in sys.argv.
+    if "DATABRICKS_RUNTIME_VERSION" in os.environ and "ipykernel" in sys.modules:
+        return []
+    return sys.argv[1:]
+
+
 def main(argv=None):
     if argv is None:
-        argv = []
+        argv = _default_argv()
     args = parse_args(argv)
 
     logging.basicConfig(
