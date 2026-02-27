@@ -1,4 +1,4 @@
-"""Proyecto cotizaciones package."""
+"""Proyecto Cotizaciones package."""
 
 from .config import PipelineConfig
 

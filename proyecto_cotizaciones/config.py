@@ -12,4 +12,6 @@ class PipelineConfig:
     enable_selenium: bool = False
     selenium_driver_path: str = "/databricks/driver/chromedriver"
     selenium_download_dir: str = "/dbfs/tmp/proyecto_cotizaciones/downloads"
+    filter_already_processed: bool = True
+    enable_candidate_diagnostics: bool = True
     log_level: str = "INFO"

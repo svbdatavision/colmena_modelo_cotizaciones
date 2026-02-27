@@ -1,6 +1,5 @@
 import base64
 import glob
-import logging
 import os
 import re
 import time
@@ -50,7 +49,6 @@ class AFPValidator:
         self.selenium_driver_path = selenium_driver_path
         self.selenium_download_dir = selenium_download_dir
         self.session = requests.Session()
-        self.logger = logging.getLogger(self.__class__.__name__)
         self._driver = None
         os.makedirs(self.selenium_download_dir, exist_ok=True)
 
@@ -144,7 +142,6 @@ class AFPValidator:
         }
         headers = {**config.get("headers", {}), "Recaptcha-Token": captcha_token}
 
-        # Mantiene comportamiento del proceso original (doble request).
         self.session.get(
             config["download_url"],
             params=params,
