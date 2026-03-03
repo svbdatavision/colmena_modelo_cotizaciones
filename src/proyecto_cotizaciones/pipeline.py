@@ -22,6 +22,7 @@ from .parsing import (
 from .pdf_utils import extract_pdf_metadata, extract_pdf_text_normalized
 
 LOGGER = logging.getLogger(__name__)
+SOURCE_REQUIRED_COLUMNS = {"DOC_IDN", "LINK", "PERIODO_PRODUCCION", "FECHA_INGRESO"}
 
 RESULT_SCHEMA = StructType(
     [
@@ -54,20 +55,31 @@ def _diff_text(left: str, right: str) -> str:
     return " | ".join(compact)
 
 
-def _load_candidates(spark: SparkSession, config: PipelineConfig):
-    cutoff_date = dt.date.today() - dt.timedelta(days=config.lookback_days)
-    source_df = (
-        spark.table(config.source_table)
-        .select(
-            F.col("DOC_IDN").cast("long").alias("doc_idn"),
-            F.col("LINK").cast("string").alias("link"),
-            F.to_date(F.col("PERIODO_PRODUCCION")).alias("periodo_produccion"),
-            F.col("FECHA_INGRESO").cast("timestamp").alias("fecha_ingreso"),
-        )
-        .filter(F.to_date(F.col("fecha_ingreso")) >= F.lit(cutoff_date))
+def _validate_source_columns(source_df) -> None:
+    available = {column.upper() for column in source_df.columns}
+    missing = sorted(SOURCE_REQUIRED_COLUMNS - available)
+    if missing:
+        raise ValueError(f"Faltan columnas requeridas en source_table: {missing}")
+
+
+def _normalize_source_dataframe(source_df):
+    return source_df.select(
+        F.col("DOC_IDN").cast("long").alias("doc_idn"),
+        F.col("LINK").cast("string").alias("link"),
+        F.to_date(F.col("PERIODO_PRODUCCION")).alias("periodo_produccion"),
+        F.col("FECHA_INGRESO").cast("timestamp").alias("fecha_ingreso"),
     )
 
-    if spark.catalog.tableExists(config.target_table):
+
+def _load_candidates(spark: SparkSession, config: PipelineConfig):
+    cutoff_date = dt.date.today() - dt.timedelta(days=config.lookback_days)
+    source_df = spark.table(config.source_table)
+    _validate_source_columns(source_df)
+    source_df = _normalize_source_dataframe(source_df).filter(
+        F.to_date(F.col("fecha_ingreso")) >= F.lit(cutoff_date)
+    )
+
+    if config.filter_already_processed and spark.catalog.tableExists(config.target_table):
         existing_ids = spark.table(config.target_table).select(F.col("DOC_IDN").cast("long").alias("doc_idn")).distinct()
         source_df = source_df.join(existing_ids, on="doc_idn", how="left_anti")
 
@@ -75,6 +87,44 @@ def _load_candidates(spark: SparkSession, config: PipelineConfig):
         source_df = source_df.orderBy("doc_idn").limit(config.row_limit)
 
     return source_df
+
+
+def _log_zero_candidate_diagnostics(spark: SparkSession, config: PipelineConfig) -> None:
+    cutoff_date = dt.date.today() - dt.timedelta(days=config.lookback_days)
+    source_df = spark.table(config.source_table)
+    normalized_df = _normalize_source_dataframe(source_df)
+    recent_df = normalized_df.filter(F.to_date(F.col("fecha_ingreso")) >= F.lit(cutoff_date))
+
+    total_source = normalized_df.count()
+    recent_source = recent_df.count()
+    min_max = normalized_df.select(
+        F.min("fecha_ingreso").alias("min_fecha_ingreso"),
+        F.max("fecha_ingreso").alias("max_fecha_ingreso"),
+    ).collect()[0]
+
+    LOGGER.warning(
+        "Diagnostico candidatos=0 | total_source=%s | recent_source=%s | cutoff_date=%s | min_fecha_ingreso=%s | max_fecha_ingreso=%s",
+        total_source,
+        recent_source,
+        cutoff_date.isoformat(),
+        min_max["min_fecha_ingreso"],
+        min_max["max_fecha_ingreso"],
+    )
+
+    if config.filter_already_processed and spark.catalog.tableExists(config.target_table):
+        existing_ids = spark.table(config.target_table).select(F.col("DOC_IDN").cast("long").alias("doc_idn")).distinct()
+        already_processed = recent_df.join(existing_ids, on="doc_idn", how="inner").count()
+        pending_after_dedup = recent_df.join(existing_ids, on="doc_idn", how="left_anti").count()
+        LOGGER.warning(
+            "Diagnostico dedup | target_table=%s | already_processed=%s | pending_after_dedup=%s",
+            config.target_table,
+            already_processed,
+            pending_after_dedup,
+        )
+    elif not config.filter_already_processed:
+        LOGGER.warning("Diagnostico dedup | filtro de procesados DESACTIVADO por configuracion.")
+    else:
+        LOGGER.warning("Diagnostico dedup | target_table no existe, no aplica left_anti.")
 
 
 def _download_original_pdf(link: str, timeout_secs: int) -> bytes:
@@ -183,13 +233,21 @@ def _process_rows(candidate_rows: List[Dict[str, Any]], config: PipelineConfig) 
 
 
 def run_pipeline(spark: SparkSession, config: PipelineConfig) -> int:
-    LOGGER.info("Cargando candidatos desde %s", config.source_table)
+    LOGGER.info(
+        "Iniciando pipeline | source_table=%s | target_table=%s | lookback_days=%s | row_limit=%s",
+        config.source_table,
+        config.target_table,
+        config.lookback_days,
+        config.row_limit,
+    )
     candidates_df = _load_candidates(spark=spark, config=config)
     candidate_rows = [row.asDict() for row in candidates_df.toLocalIterator()]
     LOGGER.info("Registros candidatos: %s", len(candidate_rows))
 
     if not candidate_rows:
         LOGGER.info("Sin registros nuevos para procesar.")
+        if config.enable_candidate_diagnostics:
+            _log_zero_candidate_diagnostics(spark=spark, config=config)
         return 0
 
     processed_rows = _process_rows(candidate_rows=candidate_rows, config=config)

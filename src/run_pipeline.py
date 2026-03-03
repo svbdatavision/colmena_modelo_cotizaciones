@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 import sys
 
 from proyecto_cotizaciones.config import PipelineConfig
@@ -16,12 +17,31 @@ def parse_args(argv):
     parser.add_argument("--enable-selenium", action="store_true")
     parser.add_argument("--selenium-driver-path", default="/databricks/driver/chromedriver")
     parser.add_argument("--selenium-download-dir", default="/dbfs/tmp/proyecto_cotizaciones/downloads")
+    parser.add_argument(
+        "--disable-filter-processed",
+        action="store_true",
+        help="No aplica left_anti contra target_table (debug/reproceso).",
+    )
+    parser.add_argument(
+        "--disable-candidate-diagnostics",
+        action="store_true",
+        help="Desactiva conteos de diagnostico cuando hay 0 candidatos.",
+    )
     parser.add_argument("--log-level", default="INFO")
     return parser.parse_args(argv)
 
 
+def _default_argv() -> list:
+    # Databricks notebooks inyectan args internos en sys.argv.
+    if "DATABRICKS_RUNTIME_VERSION" in os.environ and "ipykernel" in sys.modules:
+        return []
+    return sys.argv[1:]
+
+
 def main(argv=None):
-    args = parse_args(argv or sys.argv[1:])
+    if argv is None:
+        argv = _default_argv()
+    args = parse_args(argv)
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -37,6 +57,8 @@ def main(argv=None):
         enable_selenium=args.enable_selenium,
         selenium_driver_path=args.selenium_driver_path,
         selenium_download_dir=args.selenium_download_dir,
+        filter_already_processed=not args.disable_filter_processed,
+        enable_candidate_diagnostics=not args.disable_candidate_diagnostics,
         log_level=args.log_level,
     )
 

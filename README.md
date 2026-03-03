@@ -40,6 +40,8 @@ Parámetros opcionales:
 - `--enable-selenium` para AFP que requieren automatización de navegador (Modelo/Cuprum/Capital).
 - `--selenium-driver-path` ruta del chromedriver en el cluster.
 - `--selenium-download-dir` directorio temporal en DBFS para descargas del navegador.
+- `--disable-filter-processed` para reproceso sin left anti contra tabla salida.
+- `--disable-candidate-diagnostics` para apagar logs de diagnóstico de candidatos.
 
 ## Tabla de salida esperada
 
@@ -49,3 +51,17 @@ La tabla destino contiene:
 - `METADATA_CREATOR`, `METADATA_PRODUCER`, `METADATA_CREADATE`, `METADATA_MODDATE`
 - `ES_METADATA`, `AFP`, `ES_CERT_COT`, `CODVER`, `RUT`, `RUT_L11`
 - `RES_AFP`, `ES_DIF`, `RES_DIF`, `FECHA_PROCESO`
+
+## Troubleshooting rápido
+
+Si ves `Registros candidatos: 0`, revisa:
+
+- ventana de fechas (`--lookback-days`),
+- datos recientes en tabla fuente (`MAX(FECHA_INGRESO)`),
+- deduplicación por `DOC_IDN` contra tabla output.
+
+Puedes forzar reproceso así:
+
+```bash
+python src/run_pipeline.py --lookback-days 120 --disable-filter-processed
+```
