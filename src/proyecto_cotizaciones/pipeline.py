@@ -5,12 +5,13 @@ import time
 from typing import Any, Dict, List
 
 import requests
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import BooleanType, DateType, LongType, StringType, StructField, StructType, TimestampType
 
-from cot_01_config import PipelineConfig
-from cot_03_parsing import (
+from .afp_validator import AFPValidationError, AFPValidator
+from .config import PipelineConfig
+from .parsing import (
     calculate_rut_l11,
     extract_codver,
     extract_rut,
@@ -18,8 +19,7 @@ from cot_03_parsing import (
     metadata_matches,
     normalize_afp_from_text,
 )
-from cot_04_pdf_utils import extract_pdf_metadata, extract_pdf_text_normalized
-from cot_05_afp_validator import AFPValidationError, AFPValidator
+from .pdf_utils import extract_pdf_metadata, extract_pdf_text_normalized
 
 LOGGER = logging.getLogger(__name__)
 SOURCE_REQUIRED_COLUMNS = {"DOC_IDN", "LINK", "PERIODO_PRODUCCION", "FECHA_INGRESO"}
@@ -55,14 +55,14 @@ def _diff_text(left: str, right: str) -> str:
     return " | ".join(compact)
 
 
-def _validate_source_columns(source_df: DataFrame) -> None:
+def _validate_source_columns(source_df) -> None:
     available = {column.upper() for column in source_df.columns}
     missing = sorted(SOURCE_REQUIRED_COLUMNS - available)
     if missing:
         raise ValueError(f"Faltan columnas requeridas en source_table: {missing}")
 
 
-def _normalize_source_dataframe(source_df: DataFrame) -> DataFrame:
+def _normalize_source_dataframe(source_df):
     return source_df.select(
         F.col("DOC_IDN").cast("long").alias("doc_idn"),
         F.col("LINK").cast("string").alias("link"),
@@ -71,27 +71,22 @@ def _normalize_source_dataframe(source_df: DataFrame) -> DataFrame:
     )
 
 
-def _load_candidates(spark: SparkSession, config: PipelineConfig) -> DataFrame:
+def _load_candidates(spark: SparkSession, config: PipelineConfig):
     cutoff_date = dt.date.today() - dt.timedelta(days=config.lookback_days)
     source_df = spark.table(config.source_table)
     _validate_source_columns(source_df)
-
-    candidates_df = _normalize_source_dataframe(source_df).filter(
+    source_df = _normalize_source_dataframe(source_df).filter(
         F.to_date(F.col("fecha_ingreso")) >= F.lit(cutoff_date)
     )
 
     if config.filter_already_processed and spark.catalog.tableExists(config.target_table):
-        existing_ids_df = (
-            spark.table(config.target_table)
-            .select(F.col("DOC_IDN").cast("long").alias("doc_idn"))
-            .distinct()
-        )
-        candidates_df = candidates_df.join(existing_ids_df, on="doc_idn", how="left_anti")
+        existing_ids = spark.table(config.target_table).select(F.col("DOC_IDN").cast("long").alias("doc_idn")).distinct()
+        source_df = source_df.join(existing_ids, on="doc_idn", how="left_anti")
 
     if config.row_limit > 0:
-        candidates_df = candidates_df.orderBy("doc_idn").limit(config.row_limit)
+        source_df = source_df.orderBy("doc_idn").limit(config.row_limit)
 
-    return candidates_df
+    return source_df
 
 
 def _log_zero_candidate_diagnostics(spark: SparkSession, config: PipelineConfig) -> None:
@@ -117,13 +112,9 @@ def _log_zero_candidate_diagnostics(spark: SparkSession, config: PipelineConfig)
     )
 
     if config.filter_already_processed and spark.catalog.tableExists(config.target_table):
-        existing_ids_df = (
-            spark.table(config.target_table)
-            .select(F.col("DOC_IDN").cast("long").alias("doc_idn"))
-            .distinct()
-        )
-        already_processed = recent_df.join(existing_ids_df, on="doc_idn", how="inner").count()
-        pending_after_dedup = recent_df.join(existing_ids_df, on="doc_idn", how="left_anti").count()
+        existing_ids = spark.table(config.target_table).select(F.col("DOC_IDN").cast("long").alias("doc_idn")).distinct()
+        already_processed = recent_df.join(existing_ids, on="doc_idn", how="inner").count()
+        pending_after_dedup = recent_df.join(existing_ids, on="doc_idn", how="left_anti").count()
         LOGGER.warning(
             "Diagnostico dedup | target_table=%s | already_processed=%s | pending_after_dedup=%s",
             config.target_table,
@@ -180,6 +171,7 @@ def _process_rows(candidate_rows: List[Dict[str, Any]], config: PipelineConfig) 
         for row in candidate_rows:
             doc_idn = row["doc_idn"]
             result = _build_base_result(row)
+            original_pdf = b""
             original_text = ""
 
             try:
@@ -217,26 +209,18 @@ def _process_rows(candidate_rows: List[Dict[str, Any]], config: PipelineConfig) 
             if metadata_match is not None:
                 result["ES_METADATA"] = metadata_match
 
-            has_required_fields = all(
-                [result["ES_CERT_COT"], afp, result["RUT"], result["CODVER"]]
-            )
+            has_required_fields = all([result["ES_CERT_COT"], afp, result["RUT"], result["CODVER"]])
             if has_required_fields:
                 try:
-                    validated_pdf = validator.download_pdf(
-                        afp=afp, rut=result["RUT"], codver=result["CODVER"]
-                    )
+                    validated_pdf = validator.download_pdf(afp=afp, rut=result["RUT"], codver=result["CODVER"])
                     result["RES_AFP"] = "ok"
                     validated_text = extract_pdf_text_normalized(validated_pdf)
                     result["ES_DIF"] = validated_text != original_text
-                    result["RES_DIF"] = (
-                        _diff_text(validated_text, original_text)
-                        if result["ES_DIF"]
-                        else ""
-                    )
+                    result["RES_DIF"] = _diff_text(validated_text, original_text) if result["ES_DIF"] else ""
                 except AFPValidationError as err:
                     result["RES_AFP"] = "error"
                     LOGGER.error("doc_idn=%s error validando AFP: %s", doc_idn, err)
-                except Exception as err:  # pragma: no cover
+                except Exception as err:  # pragma: no cover - guard clause
                     result["RES_AFP"] = "error"
                     LOGGER.error("doc_idn=%s error inesperado validando AFP: %s", doc_idn, err)
 
@@ -256,7 +240,6 @@ def run_pipeline(spark: SparkSession, config: PipelineConfig) -> int:
         config.lookback_days,
         config.row_limit,
     )
-
     candidates_df = _load_candidates(spark=spark, config=config)
     candidate_rows = [row.asDict() for row in candidates_df.toLocalIterator()]
     LOGGER.info("Registros candidatos: %s", len(candidate_rows))
@@ -273,10 +256,10 @@ def run_pipeline(spark: SparkSession, config: PipelineConfig) -> int:
         return 0
 
     results_df = spark.createDataFrame(processed_rows, schema=RESULT_SCHEMA)
-    results_df.write.format("delta").mode("append").saveAsTable(config.target_table)
-    LOGGER.info(
-        "Pipeline finalizada | target_table=%s | registros_insertados=%s",
-        config.target_table,
-        len(processed_rows),
+    (
+        results_df.write.format("delta")
+        .mode("append")
+        .saveAsTable(config.target_table)
     )
+    LOGGER.info("Registros insertados en %s: %s", config.target_table, len(processed_rows))
     return len(processed_rows)
